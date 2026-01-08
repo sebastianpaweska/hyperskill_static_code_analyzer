@@ -1,15 +1,8 @@
 import os
+import re
 import argparse
 from collections import deque
 
-flags = {
-    "S001": False,
-    "S002": False,
-    "S003": False,
-    "S004": False,
-    "S005": False,
-    "S006": False,
-}
 
 def line_too_long(line):
     return len(line) > 79
@@ -27,7 +20,6 @@ def ends_with_semicolon(line):
     else:
         return line.strip().endswith(";")
 
-
 def has_two_spaces_before_comment(line):
     comment_start = line.find("#")
     if comment_start > 2:
@@ -43,6 +35,52 @@ def has_todo(line):
 def blank_lines(context_lines):
     line_p3, line_p2, line_p1 = context_lines
     return line_p3.strip() == '' and line_p2.strip() == '' and line_p1.strip() == ''
+
+def has_too_many_spaces(line):
+    line = line.strip()
+    is_construction = line.startswith("class") or line.startswith("def")
+    if is_construction:
+        first_space = line.find(" ")
+        return line[first_space+1] == " "
+    return False
+
+def is_camel_case(name):
+    pattern = r"^[A-Z][a-z]+(?:[A-Z][a-z]+)*$"
+    return bool(re.fullmatch(pattern, name))
+
+def is_valid_function_name(name):
+    pattern = r'^(__[a-z_][a-z0-9_]+__|__[a-z][a-z0-9_]*|_[a-z][a-z0-9_]*|[a-z][a-z0-9_]*(?:_[a-z][a-z0-9_]*)*)$'
+    return bool(re.fullmatch(pattern, name))
+
+def wong_class_name(line):
+    line = line.lstrip()
+    is_class = line.startswith("class")
+    if is_class:
+        class_name = get_class_name(line.lstrip())
+        return not is_camel_case(class_name)
+    return False
+
+def wrong_function_name(line):
+    line = line.lstrip()
+    is_function = line.startswith("def")
+    if is_function:
+        function_name = get_function_name(line)
+        return not is_valid_function_name(function_name)
+    return False
+
+def get_class_name(line):
+    pattern = r'class\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*(?:\(|:)'
+    match = re.search(pattern, line)
+    if match:
+        return match.group(1)
+    return None
+
+def get_function_name(line):
+    pattern = r'def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\('
+    match = re.search(pattern, line)
+    if match:
+        return match.group(1)
+    return None
 
 def process_file(filepath):
     with open(filepath, "r") as f:
@@ -61,6 +99,17 @@ def process_file(filepath):
             if i >= 3 and blank_lines(context_lines):
                 print(f"{filepath}: Line {i + 1}: S006 More than two blank lines used before this line")
             context_lines.append(line.rstrip('\n'))
+            if has_too_many_spaces(line):
+                is_class = line.lstrip().startswith("class")
+                construction_name = is_class and "class" or "def"
+                print(f"{filepath}: Line {i + 1}: S007 Too many spaces after {construction_name}")
+            if wong_class_name(line):
+                class_name = get_class_name(line.lstrip())
+                print(f"{filepath}: Line {i + 1}: S008 Class name {class_name} should be written in CamelCase")
+            if wrong_function_name(line):
+                function_name = get_function_name(line.lstrip())
+                print(f"{filepath}: Line {i + 1}: S009 Function name {function_name} should be written in snake_case")
+
 
 def get_files(filepath):
     files = [f for f in os.listdir(filepath) if os.path.isfile(os.path.join(filepath, f))]
@@ -73,7 +122,6 @@ def process_directory(filepath):
     for file in files:
         # TODO ignore nested directories for now
         if os.path.isfile(file):
-            reset_warnings()
             process_file(file)
 
 def process_path(filepath):
@@ -82,11 +130,6 @@ def process_path(filepath):
         process_directory(filepath)
     else:
         process_file(filepath)
-
-def reset_warnings():
-    for key in flags:
-        flags[key] = False
-
 
 def main():
     parser = argparse.ArgumentParser()
