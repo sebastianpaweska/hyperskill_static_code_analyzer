@@ -1,3 +1,4 @@
+import ast
 import os
 import re
 import argparse
@@ -48,7 +49,7 @@ def is_camel_case(name):
     pattern = r"^[A-Z][a-z]+(?:[A-Z][a-z]+)*$"
     return bool(re.fullmatch(pattern, name))
 
-def is_valid_function_name(name):
+def is_snake_case(name):
     pattern = r'^(__[a-z_][a-z0-9_]+__|__[a-z][a-z0-9_]*|_[a-z][a-z0-9_]*|[a-z][a-z0-9_]*(?:_[a-z][a-z0-9_]*)*)$'
     return bool(re.fullmatch(pattern, name))
 
@@ -65,7 +66,7 @@ def wrong_function_name(line):
     is_function = line.startswith("def")
     if is_function:
         function_name = get_function_name(line)
-        return not is_valid_function_name(function_name)
+        return not is_snake_case(function_name)
     return False
 
 def get_class_name(line):
@@ -82,8 +83,50 @@ def get_function_name(line):
         return match.group(1)
     return None
 
+def validate_function_args(args, errors):
+    for arg in args.args:
+        if not is_snake_case(arg.arg):
+            errors.append(f"Line {arg.lineno}: S010 Argument name {arg.arg} should be written in snake_case")
+            break
+    for arg in args.defaults:
+        if not isinstance(arg, ast.Constant):
+            errors.append(f"Line {arg.lineno}: S012 The default argument value is mutable")
+            break
+
+def print_tree_errors(errors, filepath):
+    errors.sort()
+    for error in errors:
+        print(f"{filepath}: {error}")
+
+def validate_variable(variables, errors):
+    for var in variables:
+        if isinstance(var, ast.Name):
+            if not is_snake_case(var.id):
+                errors.append(f"Line {var.lineno}: S011 Variable '{var.id}' in function should be written in snake_case")
+
+def validate_function_body(body, errors):
+    for element in body:
+        if isinstance(element, ast.Assign):
+            validate_variable(element.targets, errors) # S011
+
+def validate_tree(tree, filepath):
+    nodes = ast.iter_child_nodes(tree)
+    errors = []
+    for node in nodes:
+        if isinstance(node, ast.FunctionDef):
+            validate_function_args(node.args, errors)  # S010, S012
+            validate_function_body(node.body, errors) # S011
+        elif isinstance(node, ast.ClassDef):
+            validate_tree(node, filepath)
+
+    print_tree_errors(errors, filepath)
+
 def process_file(filepath):
     with open(filepath, "r") as f:
+        file_content = f.read()
+        tree = ast.parse(file_content)
+
+        f.seek(0)
         context_lines = deque(['', '', ''], maxlen=3)
         for i, line in enumerate(f):
             if line_too_long(line):
@@ -99,6 +142,8 @@ def process_file(filepath):
             if i >= 3 and blank_lines(context_lines):
                 print(f"{filepath}: Line {i + 1}: S006 More than two blank lines used before this line")
             context_lines.append(line.rstrip('\n'))
+
+            # TODO move to validate_tree
             if has_too_many_spaces(line):
                 is_class = line.lstrip().startswith("class")
                 construction_name = is_class and "class" or "def"
@@ -109,6 +154,7 @@ def process_file(filepath):
             if wrong_function_name(line):
                 function_name = get_function_name(line.lstrip())
                 print(f"{filepath}: Line {i + 1}: S009 Function name {function_name} should be written in snake_case")
+        validate_tree(tree, filepath)
 
 
 def get_files(filepath):
